@@ -241,13 +241,27 @@ async def start_buddy_browsing(message: Message, state: FSMContext, db: Database
     # Собираем кандидатов с рейтингом
     candidates: List[Tuple[str, int, int]] = []  # (type, id, score)
     
-    for row in profiles:
+    # profiles — итератор, конвертируем в список
+    profiles_list = list(profiles)
+    
+    logger.info(f"Buddy search: user_id={user_id}, profiles_count={len(profiles_list)}, already_liked={already_liked}, blocked={blocked_users}")
+    
+    for row in profiles_list:
+        row_user_id = row["user_id"]
         # Пропускаем себя, заблокированных и уже лайкнутых
-        if row["user_id"] == user_id or row["user_id"] in already_liked or row["user_id"] in blocked_users:
+        if row_user_id == user_id:
+            logger.debug(f"Skipping self: {row_user_id}")
+            continue
+        if row_user_id in already_liked:
+            logger.debug(f"Skipping already liked: {row_user_id}")
+            continue
+        if row_user_id in blocked_users:
+            logger.debug(f"Skipping blocked: {row_user_id}")
             continue
         profile_dict = dict(row)
         score = calculate_match_score(user_profile, profile_dict, user_lat, user_lon)
-        candidates.append(("profile", row["user_id"], score))
+        candidates.append(("profile", row_user_id, score))
+        logger.info(f"Added candidate: user_id={row_user_id}, score={score}")
     
     for row in events:
         if row["creator_id"] != user_id and row["creator_id"] not in blocked_users:
@@ -285,10 +299,14 @@ async def show_next_candidate(message: Message, state: FSMContext, db: Database)
     candidates = data.get("candidates", [])
     telegram_id = data.get("telegram_id")
     
-    if index >= len(candidates):
+    logger.info(f"show_next_candidate: index={index}, total={len(candidates)}, telegram_id={telegram_id}")
+    
+    if not candidates or index >= len(candidates):
         if telegram_id:
             await set_state(db, state, telegram_id, None)
-        await message.answer("🏁 Анкеты закончились!", reply_markup=back_to_menu_kb())
+        # Очищаем state чтобы повторные нажатия не вызывали проблем
+        await state.update_data(candidates=[], candidate_index=0)
+        await message.answer("🏁 Анкеты закончились!", reply_markup=MAIN_MENU)
         return
     
     candidate_type, candidate_id = candidates[index]
