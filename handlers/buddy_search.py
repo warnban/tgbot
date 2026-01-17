@@ -113,8 +113,8 @@ async def buddy_menu(message: Message, state: FSMContext, db: Database) -> None:
     # Сохраняем данные профиля для матчинга
     profile_dict = dict(profile)
     await state.update_data(
-        user_lat=profile.get("location_lat"),
-        user_lon=profile.get("location_lon"),
+        user_lat=profile_dict.get("location_lat"),
+        user_lon=profile_dict.get("location_lon"),
         user_profile=profile_dict,
         filters={},  # Пустые фильтры по умолчанию
     )
