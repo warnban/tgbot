@@ -113,6 +113,8 @@ async def buddy_menu(message: Message, state: FSMContext, db: Database) -> None:
     # Сохраняем данные профиля для матчинга
     profile_dict = dict(profile)
     await state.update_data(
+        current_user_id=user_id,
+        telegram_id=message.from_user.id,
         user_lat=profile_dict.get("location_lat"),
         user_lon=profile_dict.get("location_lon"),
         user_profile=profile_dict,
@@ -129,6 +131,12 @@ async def buddy_menu(message: Message, state: FSMContext, db: Database) -> None:
 @router.callback_query(F.data == "buddy:start")
 async def buddy_start_search(query: CallbackQuery, state: FSMContext, db: Database) -> None:
     """Начать просмотр анкет."""
+    # Обновляем telegram_id на случай если его нет
+    data = await state.get_data()
+    if not data.get("telegram_id"):
+        user_id = await ensure_user(db, query)
+        await state.update_data(telegram_id=query.from_user.id, current_user_id=user_id)
+    
     await set_state(db, state, query.from_user.id, BuddySearchStates.browsing)
     await start_buddy_browsing(query.message, state, db)
     await query.answer()
@@ -200,12 +208,16 @@ async def buddy_filter_clear(query: CallbackQuery, state: FSMContext, db: Databa
 
 async def start_buddy_browsing(message: Message, state: FSMContext, db: Database) -> None:
     """Начать просмотр анкет с учётом фильтров и умного матчинга."""
-    user_id = await ensure_user(db, message)
+    data = await state.get_data()
+    
+    # Используем сохранённый user_id из state (установлен в buddy_menu)
+    user_id = data.get("current_user_id")
+    telegram_id = data.get("telegram_id")
+    
     if not user_id:
         await message.answer("❌ Ошибка. Попробуй /start", reply_markup=MAIN_MENU)
         return
     
-    data = await state.get_data()
     filters = data.get("filters", {})
     user_profile = data.get("user_profile", {})
     user_lat = data.get("user_lat")
@@ -230,7 +242,8 @@ async def start_buddy_browsing(message: Message, state: FSMContext, db: Database
     candidates: List[Tuple[str, int, int]] = []  # (type, id, score)
     
     for row in profiles:
-        if row["user_id"] in already_liked or row["user_id"] in blocked_users:
+        # Пропускаем себя, заблокированных и уже лайкнутых
+        if row["user_id"] == user_id or row["user_id"] in already_liked or row["user_id"] in blocked_users:
             continue
         profile_dict = dict(row)
         score = calculate_match_score(user_profile, profile_dict, user_lat, user_lon)
@@ -249,7 +262,8 @@ async def start_buddy_browsing(message: Message, state: FSMContext, db: Database
     await state.update_data(candidates=candidates_list, candidate_index=0)
     
     if not candidates_list:
-        await set_state(db, state, message.from_user.id, None)
+        if telegram_id:
+            await set_state(db, state, telegram_id, None)
         filter_hint = ""
         if filters:
             filter_hint = "\n\n💡 Попробуй сбросить фильтры."
@@ -269,9 +283,11 @@ async def show_next_candidate(message: Message, state: FSMContext, db: Database)
     data = await state.get_data()
     index = data.get("candidate_index", 0)
     candidates = data.get("candidates", [])
+    telegram_id = data.get("telegram_id")
     
     if index >= len(candidates):
-        await set_state(db, state, message.from_user.id, None)
+        if telegram_id:
+            await set_state(db, state, telegram_id, None)
         await message.answer("🏁 Анкеты закончились!", reply_markup=back_to_menu_kb())
         return
     
