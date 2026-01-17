@@ -29,16 +29,7 @@ class EditDescriptionStates(StatesGroup):
 
 
 class SnowboardCalcStates(StatesGroup):
-    """Калькулятор сноуборда."""
-    waiting_height = State()
-    waiting_weight = State()
-    waiting_gender = State()
-    waiting_shoe_size = State()
-    waiting_style = State()
-
-
-class SkiCalcStates(StatesGroup):
-    """Калькулятор лыж."""
+    """Калькулятор размера сноуборда."""
     waiting_height = State()
     waiting_weight = State()
     waiting_level = State()

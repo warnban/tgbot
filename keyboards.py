@@ -9,7 +9,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 MAIN_MENU = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🏠 Меню")],
-        [KeyboardButton(text="🏂 Калькулятор"), KeyboardButton(text="🏔️ Склоны")],
+        [KeyboardButton(text="📐 Размер сноуборда"), KeyboardButton(text="🏔️ Склоны")],
         [KeyboardButton(text="🔍 Искать компанию"), KeyboardButton(text="👤 Профиль")],
         [KeyboardButton(text="📅 Создать событие"), KeyboardButton(text="🗓️ Мои события")],
         [KeyboardButton(text="🎓 Инструкторы"), KeyboardButton(text="🆘 SOS")],
