@@ -1,4 +1,4 @@
-import aiohttp
+import httpx
 from typing import Optional
 
 
@@ -17,18 +17,18 @@ async def get_weather(lat: float, lon: float, api_key: str) -> Optional[dict]:
     }
     
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=5) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return {
-                        "temp": round(data["main"]["temp"]),
-                        "feels_like": round(data["main"]["feels_like"]),
-                        "description": data["weather"][0]["description"],
-                        "wind": round(data["wind"]["speed"]),
-                        "humidity": data["main"]["humidity"],
-                        "icon": get_weather_emoji(data["weather"][0]["icon"]),
-                    }
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params=params, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "temp": round(data["main"]["temp"]),
+                    "feels_like": round(data["main"]["feels_like"]),
+                    "description": data["weather"][0]["description"],
+                    "wind": round(data["wind"]["speed"]),
+                    "humidity": data["main"]["humidity"],
+                    "icon": get_weather_emoji(data["weather"][0]["icon"]),
+                }
     except Exception:
         pass
     return None

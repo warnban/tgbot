@@ -1,8 +1,11 @@
+"""База данных — все SQL-операции."""
 import aiosqlite
 import json
+import logging
 from contextlib import asynccontextmanager
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Set
 
+logger = logging.getLogger(__name__)
 
 RESORTS_SEED = [
     # МОСКВА
@@ -71,6 +74,7 @@ class Database:
             await conn.close()
 
     async def init(self) -> None:
+        """Инициализация БД."""
         async with self.connection() as conn:
             await conn.executescript(
                 """
@@ -119,6 +123,16 @@ class Database:
                     FOREIGN KEY(user2_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS blocks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    blocker_id INTEGER NOT NULL,
+                    blocked_id INTEGER NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(blocker_id, blocked_id),
+                    FOREIGN KEY(blocker_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(blocked_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS resorts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
@@ -128,7 +142,20 @@ class Database:
                     site TEXT,
                     trails_count INTEGER,
                     trail_levels TEXT,
-                    lifts_count INTEGER
+                    lifts_count INTEGER,
+                    rescue_phone TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS reviews (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    resort_id INTEGER NOT NULL,
+                    rating INTEGER NOT NULL,
+                    text TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, resort_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(resort_id) REFERENCES resorts(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS events (
@@ -166,19 +193,54 @@ class Database:
                     FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS chats (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user1_id INTEGER NOT NULL,
+                    user2_id INTEGER NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user1_id, user2_id),
+                    FOREIGN KEY(user1_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(user2_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id INTEGER NOT NULL,
+                    sender_id INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+                    FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS weather_subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    resort_id INTEGER NOT NULL,
+                    UNIQUE(user_id, resort_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(resort_id) REFERENCES resorts(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_profiles_city ON profiles(city);
                 CREATE INDEX IF NOT EXISTS idx_profiles_ride_type ON profiles(ride_type);
+                CREATE INDEX IF NOT EXISTS idx_profiles_skill_level ON profiles(skill_level);
                 CREATE INDEX IF NOT EXISTS idx_events_date ON events(event_date);
                 CREATE INDEX IF NOT EXISTS idx_events_resort ON events(resort_id);
                 CREATE INDEX IF NOT EXISTS idx_instructors_city ON instructors(city);
                 CREATE INDEX IF NOT EXISTS idx_reminders_remind_at ON event_reminders(remind_at);
+                CREATE INDEX IF NOT EXISTS idx_blocks_blocker ON blocks(blocker_id);
+                CREATE INDEX IF NOT EXISTS idx_reviews_resort ON reviews(resort_id);
+                CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id);
                 """
             )
             await conn.commit()
         await self._ensure_new_columns()
         await self._seed_resorts()
+        logger.info("Database initialized")
 
     async def _ensure_new_columns(self) -> None:
+        """Миграция: добавление новых колонок."""
         async with self.connection() as conn:
             # Profiles columns
             async with conn.execute("PRAGMA table_info(profiles)") as cursor:
@@ -203,11 +265,11 @@ class Database:
             await conn.commit()
 
     async def _seed_resorts(self) -> None:
+        """Заполнение курортов."""
         async with self.connection() as conn:
             async with conn.execute("SELECT COUNT(*) as cnt FROM resorts") as cursor:
                 row = await cursor.fetchone()
                 if row["cnt"] >= len(RESORTS_SEED):
-                    # Update rescue phones for existing resorts
                     for resort in RESORTS_SEED:
                         if resort.get("rescue_phone"):
                             await conn.execute(
@@ -241,7 +303,12 @@ class Database:
             )
             await conn.commit()
 
+    # ═══════════════════════════════════════════════════════════════════
+    # USERS
+    # ═══════════════════════════════════════════════════════════════════
+
     async def upsert_user(self, telegram_id: int, username: str, first_name: str) -> int:
+        """Создать или обновить пользователя."""
         async with self.connection() as conn:
             await conn.execute(
                 """
@@ -262,6 +329,7 @@ class Database:
                 return row["id"]
 
     async def get_user_by_id(self, user_id: int) -> Optional[aiosqlite.Row]:
+        """Получить пользователя по ID."""
         async with self.connection() as conn:
             async with conn.execute(
                 "SELECT * FROM users WHERE id = ?",
@@ -269,7 +337,24 @@ class Database:
             ) as cursor:
                 return await cursor.fetchone()
 
+    async def get_user_id_by_telegram(self, telegram_id: int) -> Optional[int]:
+        """Получить user_id по telegram_id."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                "SELECT id FROM users WHERE telegram_id = ?",
+                (telegram_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row["id"] if row else None
+
+    async def get_all_users(self) -> Iterable[aiosqlite.Row]:
+        """Получить всех пользователей."""
+        async with self.connection() as conn:
+            async with conn.execute("SELECT * FROM users") as cursor:
+                return await cursor.fetchall()
+
     async def update_user_state(self, telegram_id: int, state: Optional[str]) -> None:
+        """Обновить состояние FSM в БД."""
         async with self.connection() as conn:
             await conn.execute(
                 "UPDATE users SET last_state = ? WHERE telegram_id = ?",
@@ -277,7 +362,22 @@ class Database:
             )
             await conn.commit()
 
+    async def get_user_state(self, telegram_id: int) -> Optional[str]:
+        """Получить сохранённое состояние FSM."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                "SELECT last_state FROM users WHERE telegram_id = ?",
+                (telegram_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row["last_state"] if row else None
+
+    # ═══════════════════════════════════════════════════════════════════
+    # PROFILES
+    # ═══════════════════════════════════════════════════════════════════
+
     async def get_profile(self, user_id: int) -> Optional[aiosqlite.Row]:
+        """Получить профиль пользователя."""
         async with self.connection() as conn:
             async with conn.execute(
                 """
@@ -303,6 +403,7 @@ class Database:
         location_lat: Optional[float],
         location_lon: Optional[float],
     ) -> None:
+        """Создать или обновить профиль."""
         photos_json = json.dumps(photos) if photos else None
         async with self.connection() as conn:
             await conn.execute(
@@ -321,92 +422,75 @@ class Database:
                     location_lat = excluded.location_lat,
                     location_lon = excluded.location_lon
                 """,
-                (
-                    user_id,
-                    ride_type,
-                    skill_level,
-                    age,
-                    city,
-                    about,
-                    photos_json,
-                    gender,
-                    location_lat,
-                    location_lon,
-                ),
+                (user_id, ride_type, skill_level, age, city, about, photos_json, gender, location_lat, location_lon),
             )
             await conn.commit()
 
-    async def update_ride_plan(self, user_id: int, ride_plan: str) -> None:
+    async def update_profile_photos(self, user_id: int, photos: List[str]) -> None:
+        """Обновить фото профиля."""
+        photos_json = json.dumps(photos) if photos else None
         async with self.connection() as conn:
             await conn.execute(
-                "UPDATE profiles SET ride_plan = ? WHERE user_id = ?",
-                (ride_plan, user_id),
+                "UPDATE profiles SET photos = ? WHERE user_id = ?",
+                (photos_json, user_id),
             )
             await conn.commit()
 
-    async def clear_ride_plan(self, user_id: int) -> None:
+    async def update_profile_city(
+        self, user_id: int, city: str, lat: Optional[float], lon: Optional[float]
+    ) -> None:
+        """Обновить город профиля."""
         async with self.connection() as conn:
             await conn.execute(
-                "UPDATE profiles SET ride_plan = NULL WHERE user_id = ?",
-                (user_id,),
+                "UPDATE profiles SET city = ?, location_lat = ?, location_lon = ? WHERE user_id = ?",
+                (city, lat, lon, user_id),
+            )
+            await conn.commit()
+
+    async def update_profile_level(self, user_id: int, level: str) -> None:
+        """Обновить уровень."""
+        async with self.connection() as conn:
+            await conn.execute(
+                "UPDATE profiles SET skill_level = ? WHERE user_id = ?",
+                (level, user_id),
+            )
+            await conn.commit()
+
+    async def update_profile_ride_type(self, user_id: int, ride_type: str) -> None:
+        """Обновить тип катания."""
+        async with self.connection() as conn:
+            await conn.execute(
+                "UPDATE profiles SET ride_type = ? WHERE user_id = ?",
+                (ride_type, user_id),
+            )
+            await conn.commit()
+
+    async def update_about(self, user_id: int, about: str) -> None:
+        """Обновить описание профиля."""
+        async with self.connection() as conn:
+            await conn.execute(
+                "UPDATE profiles SET about = ? WHERE user_id = ?",
+                (about, user_id),
             )
             await conn.commit()
 
     async def delete_profile(self, user_id: int) -> None:
+        """Удалить профиль."""
         async with self.connection() as conn:
             await conn.execute("DELETE FROM profiles WHERE user_id = ?", (user_id,))
             await conn.commit()
 
-    async def update_profile_location(
-        self,
-        user_id: int,
-        location_lat: float,
-        location_lon: float,
-    ) -> None:
+    async def update_profile_location(self, user_id: int, lat: float, lon: float) -> None:
+        """Обновить геолокацию."""
         async with self.connection() as conn:
             await conn.execute(
-                """
-                UPDATE profiles
-                SET location_lat = ?, location_lon = ?
-                WHERE user_id = ?
-                """,
-                (location_lat, location_lon, user_id),
+                "UPDATE profiles SET location_lat = ?, location_lon = ? WHERE user_id = ?",
+                (lat, lon, user_id),
             )
             await conn.commit()
 
-    async def list_resorts(self) -> Iterable[aiosqlite.Row]:
-        async with self.connection() as conn:
-            async with conn.execute("SELECT * FROM resorts") as cursor:
-                return await cursor.fetchall()
-
-    async def get_resort(self, resort_id: int) -> Optional[aiosqlite.Row]:
-        async with self.connection() as conn:
-            async with conn.execute(
-                "SELECT * FROM resorts WHERE id = ?",
-                (resort_id,),
-            ) as cursor:
-                return await cursor.fetchone()
-
-    async def get_resort_cities(self) -> List[str]:
-        """Get list of unique cities with resorts."""
-        async with self.connection() as conn:
-            async with conn.execute(
-                "SELECT DISTINCT address FROM resorts WHERE address IS NOT NULL ORDER BY address"
-            ) as cursor:
-                rows = await cursor.fetchall()
-                return [row["address"] for row in rows]
-
-    async def get_resorts_by_city(self, city: str) -> Iterable[aiosqlite.Row]:
-        """Get resorts in a specific city."""
-        async with self.connection() as conn:
-            async with conn.execute(
-                "SELECT * FROM resorts WHERE address LIKE ? ORDER BY name",
-                (f"%{city}%",),
-            ) as cursor:
-                return await cursor.fetchall()
-
     async def get_all_profiles(self, current_user_id: int) -> Iterable[aiosqlite.Row]:
-        """Get all profiles (excluding current user)."""
+        """Получить все профили (кроме текущего)."""
         async with self.connection() as conn:
             async with conn.execute(
                 """
@@ -420,52 +504,91 @@ class Database:
             ) as cursor:
                 return await cursor.fetchall()
 
-    async def update_about(self, user_id: int, about: str) -> None:
-        """Update profile description."""
+    async def get_filtered_profiles(
+        self,
+        current_user_id: int,
+        ride_type: Optional[str] = None,
+        skill_level: Optional[str] = None,
+        limit: int = 100,
+    ) -> Iterable[aiosqlite.Row]:
+        """Получить профили с фильтрами."""
+        query = """
+            SELECT p.*, u.username, u.first_name
+            FROM profiles p
+            JOIN users u ON u.id = p.user_id
+            WHERE p.user_id != ?
+        """
+        params: list = [current_user_id]
+        
+        if ride_type:
+            query += " AND p.ride_type = ?"
+            params.append(ride_type)
+        if skill_level:
+            query += " AND p.skill_level = ?"
+            params.append(skill_level)
+        
+        query += " ORDER BY p.id DESC LIMIT ?"
+        params.append(limit)
+        
+        async with self.connection() as conn:
+            async with conn.execute(query, params) as cursor:
+                return await cursor.fetchall()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # LIKES & MATCHES
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def add_like(self, from_user_id: int, to_user_id: int) -> None:
+        """Добавить лайк."""
         async with self.connection() as conn:
             await conn.execute(
-                "UPDATE profiles SET about = ? WHERE user_id = ?",
-                (about, user_id),
+                "INSERT OR IGNORE INTO likes (from_user_id, to_user_id) VALUES (?, ?)",
+                (from_user_id, to_user_id),
             )
             await conn.commit()
 
-    async def add_like(self, from_user_id: int, to_user_id: int) -> None:
+    async def remove_like(self, from_user_id: int, to_user_id: int) -> None:
+        """Убрать лайк."""
         async with self.connection() as conn:
             await conn.execute(
-                """
-                INSERT OR IGNORE INTO likes (from_user_id, to_user_id)
-                VALUES (?, ?)
-                """,
+                "DELETE FROM likes WHERE from_user_id = ? AND to_user_id = ?",
                 (from_user_id, to_user_id),
             )
             await conn.commit()
 
     async def has_like(self, from_user_id: int, to_user_id: int) -> bool:
+        """Проверить наличие лайка."""
         async with self.connection() as conn:
             async with conn.execute(
-                """
-                SELECT 1 FROM likes
-                WHERE from_user_id = ? AND to_user_id = ?
-                """,
+                "SELECT 1 FROM likes WHERE from_user_id = ? AND to_user_id = ?",
                 (from_user_id, to_user_id),
             ) as cursor:
                 return await cursor.fetchone() is not None
 
     async def add_match(self, user1_id: int, user2_id: int) -> None:
+        """Добавить мэтч."""
         user_low = min(user1_id, user2_id)
         user_high = max(user1_id, user2_id)
         async with self.connection() as conn:
             await conn.execute(
-                """
-                INSERT OR IGNORE INTO matches (user1_id, user2_id)
-                VALUES (?, ?)
-                """,
+                "INSERT OR IGNORE INTO matches (user1_id, user2_id) VALUES (?, ?)",
                 (user_low, user_high),
             )
             await conn.commit()
 
-    async def get_already_liked(self, user_id: int) -> set:
-        """Get set of user IDs that current user has already liked."""
+    async def has_match(self, user1_id: int, user2_id: int) -> bool:
+        """Проверить наличие мэтча."""
+        user_low = min(user1_id, user2_id)
+        user_high = max(user1_id, user2_id)
+        async with self.connection() as conn:
+            async with conn.execute(
+                "SELECT 1 FROM matches WHERE user1_id = ? AND user2_id = ?",
+                (user_low, user_high),
+            ) as cursor:
+                return await cursor.fetchone() is not None
+
+    async def get_already_liked(self, user_id: int) -> Set[int]:
+        """Получить ID уже лайкнутых."""
         async with self.connection() as conn:
             async with conn.execute(
                 "SELECT to_user_id FROM likes WHERE from_user_id = ?",
@@ -474,8 +597,25 @@ class Database:
                 rows = await cursor.fetchall()
                 return {row["to_user_id"] for row in rows}
 
+    async def get_who_liked_me(self, user_id: int) -> Iterable[aiosqlite.Row]:
+        """Получить тех, кто лайкнул меня (но я не лайкнул их)."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                """
+                SELECT u.*, p.ride_type, p.skill_level, p.city, p.about, p.photos
+                FROM likes l
+                JOIN users u ON u.id = l.from_user_id
+                LEFT JOIN profiles p ON p.user_id = l.from_user_id
+                WHERE l.to_user_id = ?
+                  AND l.from_user_id NOT IN (SELECT to_user_id FROM likes WHERE from_user_id = ?)
+                ORDER BY l.created_at DESC
+                """,
+                (user_id, user_id),
+            ) as cursor:
+                return await cursor.fetchall()
+
     async def get_user_matches(self, user_id: int) -> Iterable[aiosqlite.Row]:
-        """Get all mutual matches for a user."""
+        """Получить мэтчи пользователя."""
         async with self.connection() as conn:
             async with conn.execute(
                 """
@@ -493,6 +633,146 @@ class Database:
                 return await cursor.fetchall()
 
     # ═══════════════════════════════════════════════════════════════════
+    # BLOCKS
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def block_user(self, blocker_id: int, blocked_id: int) -> None:
+        """Заблокировать пользователя."""
+        async with self.connection() as conn:
+            await conn.execute(
+                "INSERT OR IGNORE INTO blocks (blocker_id, blocked_id) VALUES (?, ?)",
+                (blocker_id, blocked_id),
+            )
+            # Удаляем лайки и мэтчи
+            await conn.execute(
+                "DELETE FROM likes WHERE (from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?)",
+                (blocker_id, blocked_id, blocked_id, blocker_id),
+            )
+            user_low = min(blocker_id, blocked_id)
+            user_high = max(blocker_id, blocked_id)
+            await conn.execute(
+                "DELETE FROM matches WHERE user1_id = ? AND user2_id = ?",
+                (user_low, user_high),
+            )
+            await conn.commit()
+
+    async def unblock_user(self, blocker_id: int, blocked_id: int) -> None:
+        """Разблокировать пользователя."""
+        async with self.connection() as conn:
+            await conn.execute(
+                "DELETE FROM blocks WHERE blocker_id = ? AND blocked_id = ?",
+                (blocker_id, blocked_id),
+            )
+            await conn.commit()
+
+    async def get_blocked_users(self, user_id: int) -> Set[int]:
+        """Получить ID заблокированных."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                "SELECT blocked_id FROM blocks WHERE blocker_id = ?",
+                (user_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return {row["blocked_id"] for row in rows}
+
+    async def is_blocked(self, user1_id: int, user2_id: int) -> bool:
+        """Проверить, заблокирован ли кто-то из двух."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                """
+                SELECT 1 FROM blocks 
+                WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)
+                """,
+                (user1_id, user2_id, user2_id, user1_id),
+            ) as cursor:
+                return await cursor.fetchone() is not None
+
+    # ═══════════════════════════════════════════════════════════════════
+    # RESORTS
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def list_resorts(self) -> Iterable[aiosqlite.Row]:
+        """Список курортов."""
+        async with self.connection() as conn:
+            async with conn.execute("SELECT * FROM resorts") as cursor:
+                return await cursor.fetchall()
+
+    async def get_resort(self, resort_id: int) -> Optional[aiosqlite.Row]:
+        """Получить курорт."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                "SELECT * FROM resorts WHERE id = ?",
+                (resort_id,),
+            ) as cursor:
+                return await cursor.fetchone()
+
+    async def get_resort_cities(self) -> List[str]:
+        """Получить города с курортами."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                "SELECT DISTINCT address FROM resorts WHERE address IS NOT NULL ORDER BY address"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [row["address"] for row in rows]
+
+    async def get_resorts_by_city(self, city: str) -> Iterable[aiosqlite.Row]:
+        """Получить курорты по городу."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                "SELECT * FROM resorts WHERE address LIKE ? ORDER BY name",
+                (f"%{city}%",),
+            ) as cursor:
+                return await cursor.fetchall()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # REVIEWS
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def add_review(self, user_id: int, resort_id: int, rating: int, text: Optional[str]) -> None:
+        """Добавить отзыв."""
+        async with self.connection() as conn:
+            await conn.execute(
+                "INSERT OR REPLACE INTO reviews (user_id, resort_id, rating, text) VALUES (?, ?, ?, ?)",
+                (user_id, resort_id, rating, text),
+            )
+            await conn.commit()
+
+    async def get_user_resort_review(self, user_id: int, resort_id: int) -> Optional[aiosqlite.Row]:
+        """Получить отзыв пользователя на курорт."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                "SELECT * FROM reviews WHERE user_id = ? AND resort_id = ?",
+                (user_id, resort_id),
+            ) as cursor:
+                return await cursor.fetchone()
+
+    async def get_resort_reviews(self, resort_id: int, limit: int = 20) -> Iterable[aiosqlite.Row]:
+        """Получить отзывы на курорт."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                """
+                SELECT r.*, u.first_name, u.username
+                FROM reviews r
+                JOIN users u ON u.id = r.user_id
+                WHERE r.resort_id = ?
+                ORDER BY r.created_at DESC
+                LIMIT ?
+                """,
+                (resort_id, limit),
+            ) as cursor:
+                return await cursor.fetchall()
+
+    async def get_resort_rating(self, resort_id: int) -> dict:
+        """Получить средний рейтинг курорта."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                "SELECT AVG(rating) as avg, COUNT(*) as count FROM reviews WHERE resort_id = ?",
+                (resort_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return {"avg": row["avg"] or 0, "count": row["count"]}
+
+    # ═══════════════════════════════════════════════════════════════════
     # EVENTS
     # ═══════════════════════════════════════════════════════════════════
 
@@ -506,6 +786,7 @@ class Database:
         photo_file_id: Optional[str] = None,
         description: Optional[str] = None,
     ) -> int:
+        """Создать событие."""
         async with self.connection() as conn:
             cursor = await conn.execute(
                 """
@@ -520,7 +801,7 @@ class Database:
             return cursor.lastrowid
 
     async def get_active_events(self) -> Iterable[aiosqlite.Row]:
-        """Get all active events with resort info."""
+        """Получить активные события."""
         async with self.connection() as conn:
             async with conn.execute(
                 """
@@ -529,13 +810,14 @@ class Database:
                 FROM events e
                 JOIN resorts r ON r.id = e.resort_id
                 JOIN users u ON u.id = e.creator_id
-                WHERE e.is_active = 1 AND e.event_date >= date('now')
+                WHERE e.is_active = 1
                 ORDER BY e.event_date ASC
                 """,
             ) as cursor:
                 return await cursor.fetchall()
 
     async def get_event(self, event_id: int) -> Optional[aiosqlite.Row]:
+        """Получить событие."""
         async with self.connection() as conn:
             async with conn.execute(
                 """
@@ -551,7 +833,7 @@ class Database:
                 return await cursor.fetchone()
 
     async def get_user_events(self, user_id: int) -> Iterable[aiosqlite.Row]:
-        """Get events created by user."""
+        """Получить события пользователя."""
         async with self.connection() as conn:
             async with conn.execute(
                 """
@@ -566,34 +848,83 @@ class Database:
                 return await cursor.fetchall()
 
     async def deactivate_event(self, event_id: int) -> None:
+        """Деактивировать событие."""
         async with self.connection() as conn:
             await conn.execute("UPDATE events SET is_active = 0 WHERE id = ?", (event_id,))
             await conn.commit()
+
+    async def cleanup_old_events(self) -> int:
+        """Деактивировать старые события."""
+        async with self.connection() as conn:
+            cursor = await conn.execute(
+                "UPDATE events SET is_active = 0 WHERE is_active = 1 AND date(event_date) < date('now', '-7 days')"
+            )
+            await conn.commit()
+            return cursor.rowcount
+
+    # ═══════════════════════════════════════════════════════════════════
+    # CHATS
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def get_or_create_chat(self, user1_id: int, user2_id: int) -> int:
+        """Получить или создать чат."""
+        user_low = min(user1_id, user2_id)
+        user_high = max(user1_id, user2_id)
+        async with self.connection() as conn:
+            async with conn.execute(
+                "SELECT id FROM chats WHERE user1_id = ? AND user2_id = ?",
+                (user_low, user_high),
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    return row["id"]
+            
+            cursor = await conn.execute(
+                "INSERT INTO chats (user1_id, user2_id) VALUES (?, ?)",
+                (user_low, user_high),
+            )
+            await conn.commit()
+            return cursor.lastrowid
+
+    async def add_chat_message(self, chat_id: int, sender_id: int, text: str) -> None:
+        """Добавить сообщение в чат."""
+        async with self.connection() as conn:
+            await conn.execute(
+                "INSERT INTO chat_messages (chat_id, sender_id, text) VALUES (?, ?, ?)",
+                (chat_id, sender_id, text),
+            )
+            await conn.commit()
+
+    async def get_chat_messages(self, chat_id: int, limit: int = 20) -> Iterable[aiosqlite.Row]:
+        """Получить сообщения чата."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                """
+                SELECT * FROM chat_messages
+                WHERE chat_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (chat_id, limit),
+            ) as cursor:
+                return await cursor.fetchall()
 
     # ═══════════════════════════════════════════════════════════════════
     # INSTRUCTORS
     # ═══════════════════════════════════════════════════════════════════
 
-    async def add_instructor(
-        self,
-        name: str,
-        telegram_link: str,
-        city: str,
-        resorts: str,
-    ) -> int:
+    async def add_instructor(self, name: str, telegram_link: str, city: str, resorts: str) -> int:
+        """Добавить инструктора."""
         async with self.connection() as conn:
             cursor = await conn.execute(
-                """
-                INSERT INTO instructors (name, telegram_link, city, resorts)
-                VALUES (?, ?, ?, ?)
-                """,
+                "INSERT INTO instructors (name, telegram_link, city, resorts) VALUES (?, ?, ?, ?)",
                 (name, telegram_link, city, resorts),
             )
             await conn.commit()
             return cursor.lastrowid
 
     async def get_instructor_cities(self) -> List[str]:
-        """Get unique cities with instructors."""
+        """Получить города с инструкторами."""
         async with self.connection() as conn:
             async with conn.execute(
                 "SELECT DISTINCT city FROM instructors ORDER BY city"
@@ -602,7 +933,7 @@ class Database:
                 return [row["city"] for row in rows]
 
     async def get_instructors_by_city(self, city: str) -> Iterable[aiosqlite.Row]:
-        """Get instructors in a specific city."""
+        """Получить инструкторов по городу."""
         async with self.connection() as conn:
             async with conn.execute(
                 "SELECT * FROM instructors WHERE city = ? ORDER BY name",
@@ -610,29 +941,21 @@ class Database:
             ) as cursor:
                 return await cursor.fetchall()
 
-    async def delete_instructor(self, instructor_id: int) -> None:
-        async with self.connection() as conn:
-            await conn.execute("DELETE FROM instructors WHERE id = ?", (instructor_id,))
-            await conn.commit()
-
     # ═══════════════════════════════════════════════════════════════════
     # REMINDERS
     # ═══════════════════════════════════════════════════════════════════
 
     async def add_event_reminder(self, user_id: int, event_id: int, remind_at: str) -> None:
-        """Add a reminder for an event."""
+        """Добавить напоминание."""
         async with self.connection() as conn:
             await conn.execute(
-                """
-                INSERT OR IGNORE INTO event_reminders (user_id, event_id, remind_at)
-                VALUES (?, ?, ?)
-                """,
+                "INSERT OR IGNORE INTO event_reminders (user_id, event_id, remind_at) VALUES (?, ?, ?)",
                 (user_id, event_id, remind_at),
             )
             await conn.commit()
 
     async def get_pending_reminders(self, current_time: str) -> Iterable[aiosqlite.Row]:
-        """Get reminders that need to be sent."""
+        """Получить напоминания для отправки."""
         async with self.connection() as conn:
             async with conn.execute(
                 """
@@ -649,6 +972,7 @@ class Database:
                 return await cursor.fetchall()
 
     async def mark_reminder_sent(self, reminder_id: int) -> None:
+        """Отметить напоминание как отправленное."""
         async with self.connection() as conn:
             await conn.execute(
                 "UPDATE event_reminders SET sent = 1 WHERE id = ?",
@@ -656,40 +980,60 @@ class Database:
             )
             await conn.commit()
 
-    async def get_user_reminders(self, user_id: int) -> Iterable[aiosqlite.Row]:
-        """Get user's active reminders."""
+    # ═══════════════════════════════════════════════════════════════════
+    # WEATHER SUBSCRIPTIONS
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def subscribe_weather(self, user_id: int, resort_id: int) -> None:
+        """Подписаться на погоду."""
+        async with self.connection() as conn:
+            await conn.execute(
+                "INSERT OR IGNORE INTO weather_subscriptions (user_id, resort_id) VALUES (?, ?)",
+                (user_id, resort_id),
+            )
+            await conn.commit()
+
+    async def unsubscribe_weather(self, user_id: int, resort_id: int) -> None:
+        """Отписаться от погоды."""
+        async with self.connection() as conn:
+            await conn.execute(
+                "DELETE FROM weather_subscriptions WHERE user_id = ? AND resort_id = ?",
+                (user_id, resort_id),
+            )
+            await conn.commit()
+
+    async def get_weather_subscribers(self, resort_id: int) -> Iterable[aiosqlite.Row]:
+        """Получить подписчиков на погоду."""
         async with self.connection() as conn:
             async with conn.execute(
                 """
-                SELECT r.*, e.event_date, rs.name as resort_name
-                FROM event_reminders r
-                JOIN events e ON e.id = r.event_id
-                JOIN resorts rs ON rs.id = e.resort_id
-                WHERE r.user_id = ? AND r.sent = 0 AND e.is_active = 1
-                ORDER BY r.remind_at
+                SELECT u.telegram_id FROM weather_subscriptions ws
+                JOIN users u ON u.id = ws.user_id
+                WHERE ws.resort_id = ?
+                """,
+                (resort_id,),
+            ) as cursor:
+                return await cursor.fetchall()
+
+    async def get_user_weather_subscriptions(self, user_id: int) -> Iterable[aiosqlite.Row]:
+        """Получить подписки пользователя."""
+        async with self.connection() as conn:
+            async with conn.execute(
+                """
+                SELECT r.* FROM weather_subscriptions ws
+                JOIN resorts r ON r.id = ws.resort_id
+                WHERE ws.user_id = ?
                 """,
                 (user_id,),
             ) as cursor:
                 return await cursor.fetchall()
-
-    async def cleanup_old_events(self) -> int:
-        """Deactivate events older than 7 days. Returns count of deactivated."""
-        async with self.connection() as conn:
-            cursor = await conn.execute(
-                """
-                UPDATE events 
-                SET is_active = 0 
-                WHERE is_active = 1 AND date(event_date) < date('now', '-7 days')
-                """
-            )
-            await conn.commit()
-            return cursor.rowcount
 
     # ═══════════════════════════════════════════════════════════════════
     # STATISTICS
     # ═══════════════════════════════════════════════════════════════════
 
     async def get_stats(self) -> dict:
+        """Получить статистику."""
         async with self.connection() as conn:
             stats = {}
             async with conn.execute("SELECT COUNT(*) as cnt FROM users") as cursor:
@@ -702,4 +1046,8 @@ class Database:
                 stats["likes"] = (await cursor.fetchone())["cnt"]
             async with conn.execute("SELECT COUNT(*) as cnt FROM events WHERE is_active = 1") as cursor:
                 stats["events"] = (await cursor.fetchone())["cnt"]
+            async with conn.execute("SELECT COUNT(*) as cnt FROM reviews") as cursor:
+                stats["reviews"] = (await cursor.fetchone())["cnt"]
+            async with conn.execute("SELECT COUNT(*) as cnt FROM blocks") as cursor:
+                stats["blocks"] = (await cursor.fetchone())["cnt"]
             return stats

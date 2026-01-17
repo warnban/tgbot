@@ -1,3 +1,4 @@
+"""Клавиатуры бота."""
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 
@@ -33,7 +34,7 @@ BACK_KB = ReplyKeyboardMarkup(
 
 
 # ═══════════════════════════════════════════════════════════════════
-# INLINE KEYBOARDS (кнопки под сообщениями)
+# INLINE KEYBOARDS
 # ═══════════════════════════════════════════════════════════════════
 
 # --- Калькулятор ---
@@ -151,6 +152,20 @@ def profile_actions_kb() -> InlineKeyboardMarkup:
     )
 
 
+def profile_edit_kb() -> InlineKeyboardMarkup:
+    """Меню редактирования профиля."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📸 Фото", callback_data="profile:edit_photos")],
+            [InlineKeyboardButton(text="📍 Город", callback_data="profile:edit_city")],
+            [InlineKeyboardButton(text="💬 Описание", callback_data="profile:edit_about")],
+            [InlineKeyboardButton(text="📊 Уровень", callback_data="profile:edit_level")],
+            [InlineKeyboardButton(text="🎿 Тип катания", callback_data="profile:edit_ride")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="nav:menu")],
+        ]
+    )
+
+
 # --- Склоны ---
 def resorts_list_kb(resorts: list[tuple[dict, float]]) -> InlineKeyboardMarkup:
     """Список склонов с расстоянием."""
@@ -199,14 +214,66 @@ def resort_back_kb() -> InlineKeyboardMarkup:
     )
 
 
+def resort_detail_kb(resort_id: int) -> InlineKeyboardMarkup:
+    """Детали курорта с действиями."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⭐ Оставить отзыв", callback_data=f"review:{resort_id}"),
+                InlineKeyboardButton(text="📖 Отзывы", callback_data=f"reviews:{resort_id}"),
+            ],
+            [InlineKeyboardButton(text="🔔 Подписка на погоду", callback_data=f"weather_sub:{resort_id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="nav:resorts")],
+        ]
+    )
+
+
 # --- Поиск компании ---
-def buddy_actions_kb(is_event: bool = False, event_id: int = None) -> InlineKeyboardMarkup:
+def buddy_filter_kb() -> InlineKeyboardMarkup:
+    """Фильтры поиска."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎿 Тип катания", callback_data="buddy:filter_ride")],
+            [InlineKeyboardButton(text="📊 Уровень", callback_data="buddy:filter_level")],
+            [InlineKeyboardButton(text="🗑️ Сбросить фильтры", callback_data="buddy:filter_clear")],
+            [InlineKeyboardButton(text="💖 Кто меня лайкнул", callback_data="buddy:who_liked")],
+            [InlineKeyboardButton(text="▶️ Начать просмотр", callback_data="buddy:start")],
+            [InlineKeyboardButton(text="◀️ В меню", callback_data="nav:menu")],
+        ]
+    )
+
+
+def ride_type_filter_kb() -> InlineKeyboardMarkup:
+    """Фильтр по типу катания."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🏂 Сноуборд", callback_data="fride:🏂 Сноуборд")],
+            [InlineKeyboardButton(text="🎿 Лыжи", callback_data="fride:🎿 Лыжи")],
+            [InlineKeyboardButton(text="🔄 Любой", callback_data="fride:any")],
+        ]
+    )
+
+
+def level_filter_kb() -> InlineKeyboardMarkup:
+    """Фильтр по уровню."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🟢 Новичок", callback_data="flevel:Новичок")],
+            [InlineKeyboardButton(text="🔵 Средний", callback_data="flevel:Средний")],
+            [InlineKeyboardButton(text="🔴 Продвинутый", callback_data="flevel:Продвинутый")],
+            [InlineKeyboardButton(text="🔄 Любой", callback_data="flevel:any")],
+        ]
+    )
+
+
+def buddy_actions_kb(is_event: bool = False, event_id: int = None, user_id: int = None) -> InlineKeyboardMarkup:
+    """Кнопки действий при просмотре анкеты."""
     if is_event and event_id:
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="👎  Пропустить", callback_data="buddy:skip"),
-                    InlineKeyboardButton(text="👍  Хочу!", callback_data=f"event:join:{event_id}"),
+                    InlineKeyboardButton(text="👎 Пропустить", callback_data="buddy:skip"),
+                    InlineKeyboardButton(text="👍 Хочу!", callback_data=f"event:join:{event_id}"),
                 ],
                 [InlineKeyboardButton(text="◀️ В меню", callback_data="nav:menu")],
             ]
@@ -214,10 +281,39 @@ def buddy_actions_kb(is_event: bool = False, event_id: int = None) -> InlineKeyb
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="👎  Пропустить", callback_data="buddy:skip"),
-                InlineKeyboardButton(text="👍  Нравится", callback_data="buddy:like"),
+                InlineKeyboardButton(text="👎 Пропустить", callback_data="buddy:skip"),
+                InlineKeyboardButton(text="👍 Нравится", callback_data=f"buddy:like:{user_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="💬 Написать", callback_data=f"chat:{user_id}"),
+                InlineKeyboardButton(text="🚫 Блок", callback_data=f"buddy:block:{user_id}"),
             ],
             [InlineKeyboardButton(text="◀️ В меню", callback_data="nav:menu")],
+        ]
+    )
+
+
+def who_liked_kb(likers: list) -> InlineKeyboardMarkup:
+    """Список тех, кто лайкнул."""
+    rows = []
+    for liker in likers[:10]:
+        name = liker["first_name"] if liker.get("first_name") else "Райдер"
+        rows.append([
+            InlineKeyboardButton(text=f"💖 {name}", callback_data=f"viewliker:{liker['id']}")
+        ])
+    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="nav:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def liker_actions_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Действия с профилем лайкнувшего."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="👍 Лайкнуть в ответ", callback_data=f"likeback:{user_id}"),
+                InlineKeyboardButton(text="💬 Написать", callback_data=f"chat:{user_id}"),
+            ],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="buddy:who_liked")],
         ]
     )
 
@@ -248,9 +344,9 @@ def event_photo_kb() -> InlineKeyboardMarkup:
 
 
 def event_resorts_kb(resorts: list) -> InlineKeyboardMarkup:
-    """Выбор курорта для события (показываем все)."""
+    """Выбор курорта для события."""
     rows = []
-    for resort in resorts[:20]:  # Ограничиваем до 20
+    for resort in resorts[:20]:
         rows.append([
             InlineKeyboardButton(
                 text=f"🏔️ {resort['name']}",
@@ -341,7 +437,7 @@ def events_calendar_kb() -> InlineKeyboardMarkup:
 
 
 def events_list_kb(events: list) -> InlineKeyboardMarkup:
-    """Список событий с возможностью присоединиться."""
+    """Список событий."""
     rows = []
     for event in events[:10]:
         rows.append([
@@ -375,8 +471,6 @@ def sos_back_kb() -> InlineKeyboardMarkup:
     )
 
 
-
-
 # --- Инструкторы ---
 def instructor_cities_kb(cities: list) -> InlineKeyboardMarkup:
     """Список городов с инструкторами."""
@@ -389,3 +483,32 @@ def instructor_cities_kb(cities: list) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="😔 Пока нет инструкторов", callback_data="nav:menu")])
     rows.append([InlineKeyboardButton(text="◀️ В меню", callback_data="nav:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# --- Отзывы ---
+def review_rating_kb() -> InlineKeyboardMarkup:
+    """Выбор оценки."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⭐", callback_data="rating:1"),
+                InlineKeyboardButton(text="⭐⭐", callback_data="rating:2"),
+                InlineKeyboardButton(text="⭐⭐⭐", callback_data="rating:3"),
+            ],
+            [
+                InlineKeyboardButton(text="⭐⭐⭐⭐", callback_data="rating:4"),
+                InlineKeyboardButton(text="⭐⭐⭐⭐⭐", callback_data="rating:5"),
+            ],
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data="nav:menu")],
+        ]
+    )
+
+
+# --- Чат ---
+def chat_actions_kb() -> InlineKeyboardMarkup:
+    """Действия в чате."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Завершить чат", callback_data="chat:end")],
+        ]
+    )
