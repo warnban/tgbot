@@ -1,4 +1,5 @@
 """Общие хелперы для всех хендлеров."""
+import html
 import json
 import logging
 from typing import List, Optional
@@ -13,6 +14,13 @@ from services.resorts import haversine_km
 logger = logging.getLogger(__name__)
 
 
+def escape(text: str) -> str:
+    """Экранирует HTML-символы в тексте."""
+    if not text:
+        return ""
+    return html.escape(str(text))
+
+
 def format_profile(
     profile: dict,
     user_lat: Optional[float] = None,
@@ -21,10 +29,15 @@ def format_profile(
     """Форматирует профиль для отображения."""
     gender_icon = "👨" if profile.get("gender") == "м" else "👩" if profile.get("gender") == "ж" else ""
     
+    first_name = escape(profile.get('first_name', 'Без имени'))
+    city = escape(profile.get('city', ''))
+    ride_type = escape(profile.get('ride_type', ''))
+    skill_level = escape(profile.get('skill_level', ''))
+    
     lines = [
-        f"<b>{gender_icon} {profile.get('first_name', 'Без имени')}</b>, {profile['age']}",
-        f"{profile['ride_type']} • {profile['skill_level']}",
-        f"📍 {profile['city']}",
+        f"<b>{gender_icon} {first_name}</b>, {profile.get('age', '?')}",
+        f"{ride_type} • {skill_level}",
+        f"📍 {city}",
     ]
     
     # Расстояние до человека
@@ -39,7 +52,7 @@ def format_profile(
         lines.append(f"📏 {dist_str} от тебя")
     
     if profile.get("about"):
-        lines.append(f"\n💬 {profile['about']}")
+        lines.append(f"\n💬 {escape(profile['about'])}")
     
     return "\n".join(lines)
 
@@ -52,18 +65,19 @@ def format_event(event: dict) -> str:
         "Продвинутый": "🔴",
         "Любой": "⚪",
     }
-    level_icon = level_icons.get(event["skill_level"], "⚪")
+    skill_level = event.get("skill_level", "")
+    level_icon = level_icons.get(skill_level, "⚪")
     
     lines = [
         f"📅 <b>Событие</b>",
-        f"🏔️ {event['resort_name']}",
-        f"📆 {event['event_date']}",
-        f"{level_icon} Уровень: {event['skill_level']}",
-        f"👤 Организатор: {event['creator_name']}",
+        f"🏔️ {escape(event.get('resort_name', ''))}",
+        f"📆 {escape(event.get('event_date', ''))}",
+        f"{level_icon} Уровень: {escape(skill_level)}",
+        f"👤 Организатор: {escape(event.get('creator_name', ''))}",
     ]
     
     if event.get("description"):
-        lines.append(f"\n💬 {event['description']}")
+        lines.append(f"\n💬 {escape(event['description'])}")
     
     return "\n".join(lines)
 
