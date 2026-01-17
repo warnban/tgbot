@@ -340,7 +340,7 @@ async def show_event_candidate(message: Message, state: FSMContext, db: Database
         await message.answer(text, reply_markup=buddy_actions_kb(is_event=True, event_id=event_id))
 
 
-@router.callback_query(BuddySearchStates.browsing, F.data.startswith("buddy:like:"))
+@router.callback_query(F.data.startswith("buddy:like:"))
 async def buddy_like(query: CallbackQuery, state: FSMContext, db: Database) -> None:
     """Лайк профиля."""
     target_user_id = int(query.data.split(":")[2])
@@ -349,6 +349,11 @@ async def buddy_like(query: CallbackQuery, state: FSMContext, db: Database) -> N
     if not user_id:
         await query.answer("Ошибка", show_alert=True)
         return
+    
+    # Убеждаемся что данные есть в state
+    data = await state.get_data()
+    if not data.get("telegram_id"):
+        await state.update_data(telegram_id=query.from_user.id, current_user_id=user_id)
     
     # Проверяем, не лайкали ли уже (race condition fix)
     if await db.has_like(user_id, target_user_id):
@@ -373,9 +378,15 @@ async def buddy_like(query: CallbackQuery, state: FSMContext, db: Database) -> N
     await query.answer("👍")
 
 
-@router.callback_query(BuddySearchStates.browsing, F.data.startswith("event:join:"))
+@router.callback_query(F.data.startswith("event:join:"))
 async def event_join(query: CallbackQuery, state: FSMContext, db: Database) -> None:
     """Присоединиться к событию."""
+    # Убеждаемся что данные есть в state
+    data = await state.get_data()
+    if not data.get("telegram_id"):
+        user_id = await ensure_user(db, query)
+        await state.update_data(telegram_id=query.from_user.id, current_user_id=user_id)
+    
     event_id = int(query.data.split(":")[2])
     event = await db.get_event(event_id)
     
@@ -394,18 +405,28 @@ async def event_join(query: CallbackQuery, state: FSMContext, db: Database) -> N
     await query.answer("👍")
 
 
-@router.callback_query(BuddySearchStates.browsing, F.data == "buddy:skip")
+@router.callback_query(F.data == "buddy:skip")
 async def buddy_skip(query: CallbackQuery, state: FSMContext, db: Database) -> None:
     """Пропустить анкету."""
+    # Убеждаемся что telegram_id есть в state
+    data = await state.get_data()
+    if not data.get("telegram_id"):
+        await state.update_data(telegram_id=query.from_user.id)
+    
     await show_next_candidate(query.message, state, db)
     await query.answer("👎")
 
 
-@router.callback_query(BuddySearchStates.browsing, F.data.startswith("buddy:block:"))
+@router.callback_query(F.data.startswith("buddy:block:"))
 async def buddy_block(query: CallbackQuery, state: FSMContext, db: Database) -> None:
     """Заблокировать пользователя."""
     target_user_id = int(query.data.split(":")[2])
     user_id = await ensure_user(db, query)
+    
+    # Убеждаемся что данные есть в state
+    data = await state.get_data()
+    if not data.get("telegram_id"):
+        await state.update_data(telegram_id=query.from_user.id, current_user_id=user_id)
     
     if user_id:
         await db.block_user(user_id, target_user_id)

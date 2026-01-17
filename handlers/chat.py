@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-@router.callback_query(F.data.startswith("chat:"))
+@router.callback_query(F.data.regexp(r"^chat:\d+$"))
 async def start_chat(query: CallbackQuery, state: FSMContext, db: Database) -> None:
     """Начать анонимный чат."""
     target_user_id = int(query.data.split(":")[1])
