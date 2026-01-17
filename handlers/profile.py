@@ -19,7 +19,7 @@ from keyboards import (
     ride_type_kb,
 )
 from services.resorts import haversine_km
-from states import ProfileStates, EditProfileStates
+from states import ProfileStates, EditProfileStates, EditDescriptionStates
 
 from .common import (
     ensure_user,
@@ -417,7 +417,6 @@ async def edit_riding_plans(message: Message, state: FSMContext, db: Database) -
         )
         return
     
-    from states import EditDescriptionStates
     current_about = profile["about"] if profile["about"] else ""
     await set_state(db, state, message.from_user.id, EditDescriptionStates.waiting_description)
     
@@ -434,14 +433,9 @@ async def edit_riding_plans(message: Message, state: FSMContext, db: Database) -
     )
 
 
-@router.message(F.text, flags={"state": "EditDescriptionStates:waiting_description"})
+@router.message(EditDescriptionStates.waiting_description, F.text)
 async def edit_riding_plans_got(message: Message, state: FSMContext, db: Database) -> None:
     """Сохранение планов катания."""
-    from states import EditDescriptionStates
-    current_state = await state.get_state()
-    if current_state != EditDescriptionStates.waiting_description:
-        return
-    
     if not message.text or message.text == "◀️ Назад":
         await set_state(db, state, message.from_user.id, None)
         await message.answer("Отменено.", reply_markup=MAIN_MENU)

@@ -2,13 +2,14 @@
 import logging
 
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from config import load_config
 from db import Database
 from keyboards import BACK_KB, MAIN_MENU
-from states import AddInstructorStates
+from states import AddInstructorStates, BroadcastStates
 
 from .common import set_state
 
@@ -17,7 +18,7 @@ router = Router()
 config = load_config()
 
 
-@router.message(F.text == "/stats")
+@router.message(Command("stats"))
 async def cmd_stats(message: Message, db: Database) -> None:
     """Статистика бота (только для админов)."""
     if message.from_user.id not in config.admin_ids:
@@ -37,7 +38,7 @@ async def cmd_stats(message: Message, db: Database) -> None:
     )
 
 
-@router.message(F.text == "/addinst")
+@router.message(Command("addinst"))
 async def admin_add_instructor(message: Message, state: FSMContext, db: Database) -> None:
     """Добавление инструктора (только для админов)."""
     if message.from_user.id not in config.admin_ids:
@@ -120,13 +121,12 @@ async def admin_inst_resorts(message: Message, state: FSMContext, db: Database) 
         await message.answer(f"❌ Ошибка: {e}", reply_markup=MAIN_MENU)
 
 
-@router.message(F.text == "/broadcast")
+@router.message(Command("broadcast"))
 async def admin_broadcast_start(message: Message, state: FSMContext, db: Database) -> None:
     """Рассылка (только для админов)."""
     if message.from_user.id not in config.admin_ids:
         return
     
-    from states import BroadcastStates
     await set_state(db, state, message.from_user.id, BroadcastStates.waiting_message)
     await message.answer(
         "📢 <b>Рассылка</b>\n\n"
@@ -135,14 +135,9 @@ async def admin_broadcast_start(message: Message, state: FSMContext, db: Databas
     )
 
 
-@router.message(F.text, flags={"state": "BroadcastStates:waiting_message"})
+@router.message(BroadcastStates.waiting_message, F.text)
 async def admin_broadcast_send(message: Message, state: FSMContext, db: Database) -> None:
     """Отправка рассылки."""
-    from states import BroadcastStates
-    current_state = await state.get_state()
-    if current_state != BroadcastStates.waiting_message:
-        return
-    
     if not message.text or message.text == "◀️ Назад":
         await set_state(db, state, message.from_user.id, None)
         await message.answer("Отменено.", reply_markup=MAIN_MENU)

@@ -12,13 +12,14 @@ from .sos import router as sos_router
 from .reviews import router as reviews_router
 from .chat import router as chat_router
 from .admin import router as admin_router
+from .fallback import router as fallback_router
 
 
 def setup_routers() -> Router:
     """Собирает все роутеры в один."""
     router = Router()
     
-    # Порядок важен — admin и start первыми
+    # Порядок важен — admin и start первыми, fallback последним!
     router.include_router(admin_router)
     router.include_router(start_router)
     router.include_router(profile_router)
@@ -31,5 +32,7 @@ def setup_routers() -> Router:
     router.include_router(sos_router)
     router.include_router(reviews_router)
     router.include_router(chat_router)
+    # Fallback должен быть ПОСЛЕДНИМ — он ловит всё остальное
+    router.include_router(fallback_router)
     
     return router

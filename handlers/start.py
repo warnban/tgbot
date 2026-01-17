@@ -2,6 +2,7 @@
 import logging
 
 from aiogram import F, Router
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
@@ -15,9 +16,10 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-@router.message(F.text == "/start")
+@router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, db: Database) -> None:
     """Команда /start — приветствие или регистрация."""
+    logger.info(f"cmd_start called for user {message.from_user.id}")
     user_id = await ensure_user(db, message)
     profile = await db.get_profile(user_id)
     await set_state(db, state, message.from_user.id, None)
@@ -92,7 +94,3 @@ async def donate(message: Message) -> None:
     )
 
 
-@router.message()
-async def fallback(message: Message) -> None:
-    """Обработчик неизвестных сообщений."""
-    await message.answer("👇 Выбери действие из меню:", reply_markup=MAIN_MENU)
